@@ -1,0 +1,117 @@
+Google Assistant uses your information to provide more personalized results. In the sections below, you can learn more about what Google Assistant does with your data and how you can control what data is used.
+
+How Assistant understands and responds to you
+
+Assistant uses what you say, and info from your linked devices and services, to understand and respond to you. It also uses this info for other purposes stated in Google’s Privacy Policy , such as improvements to Google services (including technologies to help reduce unintended activations for everyone). Examples of information from your linked devices and services include:
+
+Go to My Account and Assistant settings to access settings and tools that let you safeguard your data and protect your privacy.
+
+If Web & App Activity is turned on, the text of your Assistant interactions and related info from your linked devices and services are saved to your Google Account. You can review and delete your Assistant interactions from My Activity .
+
+You can have your activity data auto-delete from My Activity. Choose a time limit of 3, 18, or 36 months. Any data older than the selection will be automatically deleted from My Activity on an ongoing basis.
+
+To help with quality and improve Assistant, human reviewers read, annotate, and process the text of your Assistant queries and related info. We take steps to protect your privacy as part of this process. This includes disassociating your queries from your Google Account before reviewers see or annotate them.
+
+Read our Privacy and Security Principles to better understand how we keep our users’ data private, safe and secure.
+
+How your data is used to personalize your Google Assistant experience
+
+Important : When Google Assistant gives you AI-powered answers on general knowledge topics, we use automated tools to help remove user identifying information (such as email addresses and phone numbers) before your question is sent to the LLM.
+
+Google Assistant provides built-in controls that are easy to use so you can choose the privacy settings that are right for you. Depending on your device and account setting choices, Google Assistant may use your data to create a more personalized and helpful experience. If Web & App Activity is turned on, the text of what you say to your Assistant, and info from your linked devices and services, is used to give you more personalized responses. Below are a few common questions that we get about how Google Assistant might use your data.
+
+Google Assistant may show you information from Gmail to help you get things done, like reordering food. Gmail content isn't used for ads. Learn more about Gmail privacy and security features .
+
+Depending on your settings, Google Photos can be displayed on your devices such as TVs and Google Assistant Smart Displays. You can:
+
+Control who sees your photos , including whether and when to share them.
+
+Ask Google Assistant to show your photos, if you have personal results turned on.
+
+Set up your Smart Displays to show photos, like in Ambient mode .
+
+Prevent your Google Photos from displaying on Google Assistant devices. Learn more about Photos privacy and security features .
+
+Google Assistant can reference data in your Google Account to get you what you need when you ask for help, depending on your settings in Your data in the Google Assistant and other Google Assistant settings, like Personal results and Voice Match.
+
+Learn how to control what data Google Assistant can access .
+
+If you have Web & App Activity turned on, your Google Assistant activity, such as your conversation history or the questions you asked your Google Assistant, is stored in your account and shown in My Activity. You can:
+
+Choose to auto delete your activity after 3 or 18 months, or keep it until you delete it manually.
+
+Manually delete your activity at any time.
+
+Turn on Guest Mode to use Google Assistant without your Google Assistant activity being saved to your account or used to personalize your experience.
+
+Learn how to manage your audio recordings .
+
+You can view or delete your Google Assistant activity in your account at any time. Learn how to delete your Google Assistant history .
+
+Choose what data to share with Google Assistant
+
+Google is always working to help people understand and manage their data.
+
+There are a few settings that help give you a more personalized experience on Google Assistant. You can choose to turn these settings on or off at any time:
+
+Personalized speech recognition in Assistant
+
+When you turn off these settings, you turn them off for your Assistant and other Google services you use. Learn how these settings personalize your Google Assistant experience .
+
+If you don’t want Google Assistant to read or show results specific to you on your device, you can turn off Personal results for that device. When you turn off Personal results, your Assistant won’t give you personalized results including results from other Google products and services, like Gmail or Google Calendar. Learn how to manage personal results for your Google Assistant-enabled devices .
+
+If you want Google Assistant to give personal results but don’t want your photos from Google Photos to show on your smart displays or TVs, you can turn off access to Google Photos:
+
+At the top right, tap your Profile picture or initial Videos & photos . If you don’t find your profile picture or initial, first tap .
+
+If you don’t find your profile picture or initial, first tap .
+
+You can control what data Google uses to personalize ads to you in your Ad settings .
+
+If you have Web & App Activity turned on, your interactions with your Assistant are saved in your Google Account and shown in your Google Assistant activity in My Activity . You can delete your Google Assistant activity at any time or change your auto-delete settings. Learn how to delete your Google Assistant activity .
+
+You can also ask your Google Assistant to delete activity from your account. For example, you can say:
+
+“Hey Google, delete my last conversation.”
+
+Tip: You can also remove Voice Match from all devices. To remove Voice Match, tap Remove Voice Match from all my devices .
+
+If you remove Voice Match from all your devices, your Google Assistant no longer recognizes your voice. Your Google Assistant loses core features and capabilities such as:
+
+It won't give you personal results like: Tasks and calendar events on shared devices like speakers and Smart Displays. Personal results may still be available on your phone.
+
+Tasks and calendar events on shared devices like speakers and Smart Displays.
+
+Personal results may still be available on your phone.
+
+It won't respond to "Hey Google" on your phone, but responds to it on shared devices.
+
+It no longer recognizes your face as Face Match is also removed from eligible devices.
+
+Audio clips and photos you took to enroll in these services are deleted. It may take some time for this change to take effect. For some older devices, you may need another way to remove Voice Match.
+
+How Google Assistant keeps your data private
+
+How Google Assistant is designed for your privacy
+
+1 of 11 Delete your Google Assistant activity
+
+2 of 11 Choose what to share with your Google Assistant
+
+3 of 11 Choose which services remember you
+
+4 of 11 Turn off info sharing on non-Android TV devices
+
+5 of 11 How Google Assistant protects your privacy
+
+6 of 11 How Google Assistant works with your data
+
+7 of 11 How Google Assistant is designed for your privacy
+
+8 of 11 Learn how Google improves speech models
+
+9 of 11 How Voice Action Services uses & protects your data
+
+10 of 11 About DMA & your linked services
+
+11 of 11 Manage your linked Google services
