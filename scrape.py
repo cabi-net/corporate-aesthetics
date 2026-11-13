@@ -1,184 +1,296 @@
+"""
+corporate aesthetics — weekly snapshot scraper.
+
+Each target is one entry in TARGETS. A run fetches the page, extracts the
+text, cleans out navigation noise, validates that what came back is really
+the policy (not a block page or an empty shell), and only then writes a
+dated snapshot. A target that fails validation writes nothing and makes the
+run exit non-zero, so the workflow fails visibly instead of archiving junk.
+"""
+
 import asyncio
-import requests
 import os
+import re
+import sys
 from datetime import datetime, timezone
-from playwright.async_api import async_playwright
+
+import requests
 from bs4 import BeautifulSoup
 
-DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
-async def scrape_google():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        await page.goto(
-            "https://support.google.com/assistant/answer/11091015?hl=en",
-            wait_until="networkidle",
-            timeout=30000
-        )
-        await page.wait_for_timeout(3000)
-        html = await page.content()
-        await browser.close()
+SNAPSHOT_DIR = "snapshots"
 
+# ─── targets ─────────────────────────────────────────────────────────────────
+#
+# tags       elements whose text is collected
+# min_len    shortest chunk worth keeping
+# root       CSS selector to scope extraction to (falls back to whole page)
+# drop       regexes for boilerplate chunks (nav menus, sign-in banners)
+# min_chars  a valid snapshot is at least this long
+# expand     click collapsed accordions before reading the page
+# wait       ms to wait after load
+
+TARGETS = {
+    "google": {
+        "method": "playwright",
+        "url": "https://support.google.com/assistant/answer/11091015?hl=en",
+        "tags": ["h2", "h3", "p", "li"],
+        "min_len": 40,
+        "drop": [r"^\d+ of \d+ "],  # "related articles" list
+        "min_chars": 3000,
+        "wait": 3000,
+    },
+    "meta": {
+        "method": "playwright",
+        "url": "https://privacycenter.instagram.com/privacy/genai/",
+        "tags": ["h1", "h2", "h3", "p", "li", "span"],
+        "min_len": 60,
+        "drop": [
+            r"^Privacy Policy What is the Privacy Policy",  # side nav
+            r"^Other policies and articles",                # side nav
+        ],
+        "min_chars": 4000,
+        "expand": True,
+        "wait": 4000,
+    },
+    "microsoft": {
+        "method": "playwright",
+        "url": "https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy",
+        "tags": ["h1", "h2", "h3", "p", "li"],
+        "min_len": 40,
+        "root": "main",
+        "drop": [r"^Access to this page requires authorization"],
+        "min_chars": 6000,
+        "wait": 4000,
+    },
+    "openai": {
+        "method": "wayback",
+        "url": "https://openai.com/policies/data-processing-addendum/",
+        "tags": ["h1", "h2", "h3", "p", "li"],
+        "min_len": 40,
+        "min_chars": 6000,
+    },
+}
+
+# Phrases that only show up when a site has served a bot wall instead of
+# the page. Matched case-insensitively against the extracted text.
+BLOCK_MARKERS = [
+    "false positive designation",
+    "verify you are human",
+    "verify you are a human",
+    "unusual traffic",
+    "enable javascript and cookies to continue",
+    "access denied",
+    "checking your browser",
+    "captcha",
+]
+
+
+class ScrapeError(Exception):
+    """The page could not be fetched, or what came back is not the policy."""
+
+
+# ─── text extraction (pure functions — these are what the tests cover) ───────
+
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿"), None)
+
+
+def normalize(text):
+    """Collapse whitespace and strip invisible characters, so a changed
+    non-breaking space doesn't register as a changed policy."""
+    text = text.translate(_INVISIBLE).replace(" ", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_chunks(html, tags, min_len=40, root=None):
+    """Return the text of each matching element, in document order."""
     soup = BeautifulSoup(html, "html.parser")
+    scope = (soup.select_one(root) if root else None) or soup
     chunks = []
-    for tag in soup.find_all(["h2", "h3", "p", "li"]):
-        text = tag.get_text(separator=" ", strip=True)
-        if len(text) > 40:
+    for tag in scope.find_all(tags):
+        text = normalize(tag.get_text(separator=" ", strip=True))
+        if len(text) > min_len:
             chunks.append(text)
-    return "\n\n".join(chunks)
+    return chunks
 
 
-async def scrape_meta():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        await page.goto(
-            "https://privacycenter.instagram.com/privacy/genai/",
-            wait_until="networkidle",
-            timeout=30000
-        )
-        await page.wait_for_timeout(4000)
+def clean_chunks(chunks, drop=()):
+    """Remove navigation noise and nested duplicates.
 
-        # click all accordion buttons to expand hidden content
-        buttons = await page.query_selector_all('[role="button"]')
-        for button in buttons:
-            try:
-                expanded = await button.get_attribute("aria-expanded")
-                if expanded == "false":
-                    await button.click()
-                    await page.wait_for_timeout(500)
-            except:
-                pass
+    - a chunk matching a `drop` pattern is boilerplate; so is any chunk
+      whose text sits entirely inside one (the individual nav links)
+    - a list is often captured three times: once as a whole
+      ("• a • b • c"), then each item with and without its bullet.
+      The whole is kept, the repeated items are dropped.
+    - exact duplicates are dropped, first occurrence wins
+    """
+    patterns = [re.compile(p) for p in drop]
+    boilerplate = [c for c in chunks if any(p.search(c) for p in patterns)]
 
-        await page.wait_for_timeout(2000)
-        html = await page.content()
-        await browser.close()
+    list_items = set()
+    for c in chunks:
+        if c.count("•") >= 2:
+            list_items.update(p.strip() for p in c.split("•") if p.strip())
 
-    soup = BeautifulSoup(html, "html.parser")
-    chunks = []
-    for tag in soup.find_all(["h1", "h2", "h3", "p", "li", "span"]):
-        text = tag.get_text(separator=" ", strip=True)
-        if len(text) > 60:
-            chunks.append(text)
-
-    # deduplicate while preserving order
     seen = set()
-    unique = []
-    for chunk in chunks:
-        if chunk not in seen:
-            seen.add(chunk)
-            unique.append(chunk)
+    cleaned = []
+    for c in chunks:
+        if any(c in b for b in boilerplate):
+            continue
+        if c.count("•") < 2 and c.lstrip("• ").strip() in list_items:
+            continue
+        if c in seen:
+            continue
+        seen.add(c)
+        cleaned.append(c)
+    return cleaned
 
-    return "\n\n".join(unique)
 
-async def scrape_microsoft():
+def validate(name, text, min_chars):
+    """Raise ScrapeError unless `text` plausibly is the policy page."""
+    lowered = text.lower()
+    for marker in BLOCK_MARKERS:
+        if marker in lowered:
+            raise ScrapeError(f"{name}: looks like a block page ({marker!r})")
+    if len(text) < min_chars:
+        raise ScrapeError(
+            f"{name}: only {len(text)} chars extracted, expected at least {min_chars}"
+        )
+    return text
+
+
+def html_to_snapshot(name, html):
+    """Full pipeline for one target: extract → clean → validate."""
+    cfg = TARGETS[name]
+    chunks = extract_chunks(html, cfg["tags"], cfg["min_len"], cfg.get("root"))
+    text = "\n\n".join(clean_chunks(chunks, cfg.get("drop", ())))
+    return validate(name, text, cfg["min_chars"])
+
+
+# ─── fetching ────────────────────────────────────────────────────────────────
+
+async def fetch_playwright(cfg):
+    from playwright.async_api import async_playwright
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        await page.goto(
-            "https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy",
-            wait_until="networkidle",
-            timeout=30000
-        )
-        await page.wait_for_timeout(4000)
-        html = await page.content()
-        await browser.close()
+        try:
+            page = await browser.new_page(user_agent=USER_AGENT)
+            await page.goto(cfg["url"], wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(cfg.get("wait", 2000))
 
-    soup = BeautifulSoup(html, "html.parser")
+            if cfg.get("expand"):
+                for button in await page.query_selector_all('[role="button"]'):
+                    try:
+                        if await button.get_attribute("aria-expanded") == "false":
+                            await button.click()
+                            await page.wait_for_timeout(500)
+                    except Exception:
+                        continue  # a button that won't click shouldn't sink the run
+                await page.wait_for_timeout(2000)
 
-    # target the main article content, ignore nav/sidebar
-    article = soup.find("main") or soup
-    chunks = []
-    for tag in article.find_all(["h1", "h2", "h3", "p", "li"]):
-        text = tag.get_text(separator=" ", strip=True)
-        if len(text) > 40:
-            chunks.append(text)
-
-    seen = set()
-    unique = []
-    for chunk in chunks:
-        if chunk not in seen:
-            seen.add(chunk)
-            unique.append(chunk)
-
-    return "\n\n".join(unique)
+            return await page.content()
+        finally:
+            await browser.close()
 
 
-def scrape_openai_wayback():
-    url = "http://archive.org/wayback/available?url=openai.com/policies/data-processing-addendum/"
+def wayback_captures(url, limit=8, get=requests.get):
+    """Newest-first (timestamp, original_url) pairs from the Wayback CDX index."""
+    response = get(
+        "https://web.archive.org/cdx/search/cdx",
+        params={
+            "url": url,
+            "output": "json",
+            "filter": "statuscode:200",
+            "limit": f"-{limit}",
+        },
+        timeout=30,
+    )
+    if not response.text.strip():
+        return []
+    rows = response.json()[1:]  # first row is the column header
+    return [(row[1], row[2]) for row in reversed(rows)]
+
+
+def scrape_wayback(name, get=requests.get):
+    """OpenAI blocks automated access, so its page is read through the
+    Internet Archive. The newest capture is sometimes itself a block page,
+    so walk back through recent captures until one validates."""
+    cfg = TARGETS[name]
     try:
-        response = requests.get(url, timeout=15)
-        if not response.text.strip():
-            return "Wayback API returned empty response — try again later"
-        data = response.json()
+        captures = wayback_captures(cfg["url"], get=get)
     except Exception as e:
-        return f"Wayback API error: {str(e)}"
+        raise ScrapeError(f"{name}: Wayback CDX lookup failed ({e})") from e
+    if not captures:
+        raise ScrapeError(f"{name}: no Wayback captures found")
 
-    snapshot = data.get("archived_snapshots", {}).get("closest", {})
+    last_error = None
+    for timestamp, original in captures:
+        snapshot_url = f"https://web.archive.org/web/{timestamp}/{original}"
+        try:
+            html = get(snapshot_url, timeout=30).content
+            body = html_to_snapshot(name, html)
+        except Exception as e:
+            last_error = e
+            continue
+        return f"[Wayback snapshot: {timestamp}]\n[URL: {snapshot_url}]\n\n{body}"
 
-    if not snapshot or not snapshot.get("available"):
-        return "No snapshot available"
+    raise ScrapeError(f"{name}: no usable capture in the last {len(captures)} ({last_error})")
 
-    snapshot_url = snapshot["url"]
+
+async def scrape(name):
+    cfg = TARGETS[name]
+    if cfg["method"] == "wayback":
+        return scrape_wayback(name)
     try:
-        page = requests.get(snapshot_url, timeout=15)
-        soup = BeautifulSoup(page.content, "html.parser")
+        html = await fetch_playwright(cfg)
     except Exception as e:
-        return f"Failed to fetch snapshot: {str(e)}"
-
-    chunks = []
-    for tag in soup.find_all(["h1", "h2", "h3", "p", "li"]):
-        text = tag.get_text(separator=" ", strip=True)
-        if len(text) > 40:
-            chunks.append(text)
-
-    snapshot_date = snapshot.get("timestamp", "unknown")
-    header = f"[Wayback snapshot: {snapshot_date}]\n[URL: {snapshot_url}]\n\n"
-    return header + "\n\n".join(chunks)
+        raise ScrapeError(f"{name}: fetch failed ({e})") from e
+    return html_to_snapshot(name, html)
 
 
-def save_snapshot(name, content):
-    folder = f"snapshots/{name}"
+# ─── saving ──────────────────────────────────────────────────────────────────
+
+def save_snapshot(name, content, now=None, base=SNAPSHOT_DIR):
+    """Write today's snapshot. If one already exists (a second run on the
+    same day), save to catches/ instead of overwriting it."""
+    now = now or datetime.now(timezone.utc)
+    date = now.strftime("%Y-%m-%d")
+    folder = os.path.join(base, name)
     os.makedirs(folder, exist_ok=True)
-    filepath = f"{folder}/{DATE}.txt"
+    path = os.path.join(folder, f"{date}.txt")
 
-    if os.path.exists(filepath):
-        time_str = datetime.now(timezone.utc).strftime("%H%M")
-        catch_folder = f"snapshots/catches/{name}"
-        os.makedirs(catch_folder, exist_ok=True)
-        catch_path = f"{catch_folder}/{DATE}-{time_str}.txt"
-        with open(catch_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"Already scraped today — saved as catch: {catch_path}")
-        return
+    if os.path.exists(path):
+        folder = os.path.join(base, "catches", name)
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"{date}-{now.strftime('%H%M')}.txt")
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Saved: {filepath}")
+    return path
 
 
 async def main():
-    print("Scraping Google...")
-    save_snapshot("google", await scrape_google())
+    failures = []
+    for name in TARGETS:
+        print(f"scraping {name}...")
+        try:
+            content = await scrape(name)
+        except ScrapeError as e:
+            print(f"  FAILED — {e}")
+            failures.append(name)
+            continue
+        print(f"  saved {save_snapshot(name, content)}")
 
-    print("Scraping Meta...")
-    save_snapshot("meta", await scrape_meta())
+    if failures:
+        print(f"\n{len(failures)} target(s) failed: {', '.join(failures)}")
+        return 1
+    return 0
 
-    print("Scraping Microsoft...")
-    save_snapshot("microsoft", await scrape_microsoft())
 
-    print("Scraping OpenAI via Wayback Machine...")
-    openai_content = scrape_openai_wayback()
-    if openai_content.startswith("Wayback") or openai_content.startswith("No snapshot") or openai_content.startswith("Failed"):
-        print(f"Skipping save: {openai_content}")
-    else:
-        save_snapshot("openai", openai_content)
-
-asyncio.run(main())
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))
