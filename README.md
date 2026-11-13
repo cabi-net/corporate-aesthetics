@@ -29,7 +29,7 @@ March – November 2026, 36 weekly snapshots. Seven weeks in which the wording m
 **Microsoft**
 
 - **13 April** — a link comparing models sold in Azure Government is added.
-- **25 May** — "Azure Direct Models" is renamed "Models sold by Azure" in 26 paragraphs. The page this archive started watching as "Azure OpenAI" no longer uses that name in its title.
+- **25 May** — "Azure Direct Models" is renamed "Models sold by Azure" in 26 paragraphs, title included.
 - **10 August** — the instruction to report problems to an email address is replaced by a paragraph directing reports to the Microsoft Security Response Center, naming prompt injection, unsafe output and data exposure as examples.
 - **9 November** — a new section on how content stored by the Responses API is encrypted.
 
