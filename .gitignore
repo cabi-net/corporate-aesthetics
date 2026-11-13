@@ -3,3 +3,4 @@ __pycache__/
 .env
 CONTEXT.md
 .pytest_cache/
+site/
