@@ -72,6 +72,10 @@ TARGETS = {
         "url": "https://openai.com/policies/data-processing-addendum/",
         "tags": ["h1", "h2", "h3", "p", "li"],
         "min_len": 40,
+        "drop": [
+            r"Back to main menu",              # site header menus
+            r"\(opens in a new window\)$",     # footer links
+        ],
         "min_chars": 6000,
     },
 }
