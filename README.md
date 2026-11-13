@@ -85,7 +85,7 @@ Each target is one entry in `TARGETS` in `scrape.py` (url, tags to collect, boil
 ```bash
 pip install -r requirements-dev.txt
 playwright install chromium   # only needed to run the scraper itself
-pytest                        # 64 tests, no network
+pytest                        # 66 tests, no network
 python scrape.py
 python diff.py                # writes site/index.html
 ```

@@ -170,3 +170,25 @@ def test_archive_page_builds_and_contains_a_known_rewording():
     page = build()
     assert "<del>free</del>" in page
     assert "<ins>contributor tier</ins>" in page
+
+
+# ─── main ────────────────────────────────────────────────────────────────────
+
+def test_main_writes_the_page_and_copies_fonts_next_to_it(tmp_path):
+    assets = tmp_path / "assets" / "fonts"
+    assets.mkdir(parents=True)
+    (assets / "Font.woff2").write_bytes(b"font")
+    out = tmp_path / "site" / "index.html"
+
+    diff.main(out=str(out), assets=str(tmp_path / "assets"))
+
+    assert "<title>corporate aesthetics</title>" in out.read_text(encoding="utf-8")
+    assert (tmp_path / "site" / "assets" / "fonts" / "Font.woff2").read_bytes() == b"font"
+
+
+def test_every_font_the_page_references_is_in_the_repo():
+    import re
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    for url in re.findall(r"url\('([^']+)'\)", diff.CSS):
+        assert (root / url).is_file(), url

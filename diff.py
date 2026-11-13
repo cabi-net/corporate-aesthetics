@@ -13,6 +13,7 @@ import difflib
 import html
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 
 from scrape import SNAPSHOT_DIR, TARGETS, clean_chunks, normalize
@@ -152,34 +153,79 @@ def render_institution(name, snapshots, changes):
 
 
 CSS = """
+/* palette, type and components adapted from the sick genesis design system (pale mint mode) */
+@font-face { font-family: 'Karrik'; src: url('assets/fonts/Karrik-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Steps Mono'; src: url('assets/fonts/Steps-Mono.otf') format('opentype'); font-display: swap; }
+@font-face { font-family: 'Steps Mono Thin'; src: url('assets/fonts/Steps-Mono-Thin.otf') format('opentype'); font-display: swap; }
+:root {
+  --sg-black: #000000; --sg-white: #ffffff;
+  --sg-cyan: #9fedfc; --sg-blue: #2c73dd;
+  --sg-magenta: #f35aea; --sg-pink-pale: #f59cf8; --sg-pink-deep: #df2a85;
+  --sg-violet: #9d4eac; --sg-mint-pale: #d7fefb;
+
+  --color-bg: var(--sg-mint-pale);
+  --color-surface: var(--sg-white);
+  --color-text: var(--sg-black);
+  --color-text-body: #1a1a1a;
+  --color-text-muted: #444;
+  --color-secondary: var(--sg-blue);
+  --color-removed: var(--sg-pink-deep);
+  --color-removed-mark: var(--sg-pink-pale);
+  --color-added: var(--sg-blue);
+  --color-added-mark: var(--sg-cyan);
+  --color-rule: rgba(0, 0, 0, 0.15);
+
+  --font-body: 'Karrik', Georgia, serif;
+  --font-ui: 'Steps Mono', 'Courier New', monospace;
+  --font-label: 'Steps Mono Thin', 'Courier New', monospace;
+
+  --text-xs: 11px; --text-sm: 13px; --text-base: 15px; --text-md: 18px;
+  --text-lg: 24px; --text-xl: 32px; --text-2xl: 56px;
+  --space-xs: 4px; --space-sm: 8px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px;
+}
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #f9f7f4; color: #1a1a1a; font-family: Georgia, 'Times New Roman', serif;
-       font-size: 1rem; line-height: 1.65; padding: 3rem 1.5rem; }
-.wrap { max-width: 860px; margin: 0 auto; }
+body { background: var(--color-bg); color: var(--color-text-body); font-family: var(--font-body);
+       font-size: var(--text-base); line-height: 1.6; padding: 64px 48px; }
+.wrap { max-width: 900px; margin: 0 auto; }
 a { color: inherit; }
-header { border-bottom: 1px solid #ddd; margin-bottom: 2rem; padding-bottom: 1.5rem; }
-header h1 { font-size: 1.4rem; font-weight: normal; letter-spacing: 0.12em; text-transform: lowercase; }
-header .subtitle { color: #666; font-size: 0.9rem; margin-top: 0.3rem; }
-header .generated, nav, .dates, .wayback { font-family: 'Courier New', monospace; }
-header .generated { color: #767676; font-size: 0.75rem; margin-top: 0.5rem; }
-nav { font-size: 0.8rem; margin-bottom: 3rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
-section { margin-bottom: 4rem; }
-section h2 { font-size: 0.8rem; font-weight: normal; letter-spacing: 0.18em; text-transform: uppercase; color: #444; }
-.summary { color: #666; font-size: 0.85rem; margin-bottom: 1.5rem; }
-.change { margin-bottom: 2.5rem; border-top: 1px solid #e8e4df; padding-top: 1rem; }
-.dates { font-size: 0.8rem; color: #555; margin-bottom: 0.75rem; }
+a:focus-visible { outline: 2px solid var(--sg-blue); outline-offset: 2px; }
+
+header { margin-bottom: var(--space-xl); }
+header h1 { font-size: clamp(36px, 9vw, var(--text-2xl)); font-weight: 700; line-height: 1.1;
+            color: var(--color-text); text-transform: lowercase; margin-bottom: var(--space-md); }
+header .subtitle { font-size: var(--text-md); max-width: 60ch; }
+header .generated, .summary, .dates, .wayback, .gap, .quiet, footer {
+  font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: 0.08em; text-transform: uppercase; }
+header .generated { color: var(--color-text-muted); margin-top: var(--space-md); }
+
+nav { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: 56px; }
+nav a { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: 0.15em; text-transform: uppercase;
+        text-decoration: none; color: var(--color-secondary); border: 1px solid var(--color-secondary); padding: 3px 10px; }
+nav a:hover { background: var(--color-secondary); color: var(--sg-white); }
+
+section { padding-top: 48px; margin-bottom: 48px; border-top: 1px solid var(--color-rule); }
+section h2 { font-size: var(--text-xl); font-weight: 700; color: var(--color-text); margin-bottom: var(--space-xs); }
+.summary { color: var(--color-text-muted); margin-bottom: var(--space-lg); }
+
+.change { background: var(--color-surface); border: 1px solid rgba(0, 0, 0, 0.1); padding: 20px; margin-bottom: var(--space-lg); }
+.dates { color: #666; margin-bottom: var(--space-md); }
 .dates a { text-decoration: none; }
 .dates a:hover { text-decoration: underline; }
-.wayback { font-size: 0.72rem; color: #767676; margin-bottom: 0.75rem; overflow-wrap: anywhere; }
-.para { padding: 0.55em 1em; margin: 0.2em 0; border-left: 3px solid transparent; font-size: 0.92rem; overflow-wrap: anywhere; }
-.removed { background: #fdf0ef; border-left-color: #c0392b; color: #7a2a25; }
-.added { background: #f0f7f0; border-left-color: #27ae60; color: #1e5c3a; }
-.removed::before { content: "\\2212\\00a0"; }
-.added::before { content: "+\\00a0"; }
-del { background: #f5c6c1; text-decoration: line-through; }
-ins { background: #bfe3c6; text-decoration: none; font-weight: bold; }
-.gap, .quiet { color: #767676; font-size: 0.78rem; font-style: italic; padding: 0.5em 1em; }
-footer { border-top: 1px solid #ddd; margin-top: 4rem; padding-top: 1.5rem; font-size: 0.78rem; color: #767676; }
+.wayback { color: #666; text-transform: none; letter-spacing: 0; margin-bottom: var(--space-md); overflow-wrap: anywhere; }
+
+.para { padding: 10px 14px; margin: var(--space-xs) 0; border-left: 3px solid transparent;
+        font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.removed { border-left-color: var(--color-removed); background: rgba(245, 156, 248, 0.16); }
+.added { border-left-color: var(--color-added); background: rgba(159, 237, 252, 0.28); }
+.removed::before { content: "\\2212\\00a0"; color: var(--color-removed); font-family: var(--font-ui); }
+.added::before { content: "+\\00a0"; color: var(--color-added); font-family: var(--font-ui); }
+del { background: var(--color-removed-mark); text-decoration: line-through; text-decoration-thickness: 1px; }
+ins { background: var(--color-added-mark); text-decoration: none; font-weight: 700; }
+.gap, .quiet { font-family: var(--font-label); color: var(--color-text-muted); padding: var(--space-sm) 14px; }
+
+footer { border-top: 1px solid var(--color-rule); padding-top: var(--space-lg); color: var(--color-text-muted); line-height: 1.8; }
+
+@media (max-width: 600px) { body { padding: 32px 16px; } .change { padding: 14px; } }
 """
 
 
@@ -224,10 +270,13 @@ def build(base=SNAPSHOT_DIR, now=None):
     return render_page(sections, now.strftime("%Y-%m-%d %H:%M UTC"))
 
 
-def main(out="site/index.html"):
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+def main(out="site/index.html", assets="assets"):
+    site = os.path.dirname(out)
+    os.makedirs(site, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         f.write(build())
+    if os.path.isdir(assets):  # fonts
+        shutil.copytree(assets, os.path.join(site, "assets"), dirs_exist_ok=True)
     print(f"saved {out}")
 
 
