@@ -1,10 +1,11 @@
 """
-Tests for the extraction / cleaning / validation pipeline in scrape.py.
+Tests for the text handling, validation, Wayback fallback and saving in
+scrape.py. Nothing here touches the network or opens a browser (the
+in-page extractor is covered in test_extract.py).
 
-Nothing here touches the network. Two kinds of input are used:
-  - small hand-written HTML, to pin down how extraction behaves
-  - the archive itself (snapshots/), to prove the cleaning rules remove the
-    noise that was actually recorded and keep the policy text that changed
+The clean_chunks tests run against the archive itself (snapshots/), to
+prove the cleaning rules remove the noise that was actually recorded in
+format-1 snapshots and keep the policy text that changed.
 """
 
 from datetime import datetime, timezone
@@ -16,12 +17,12 @@ import scrape
 from scrape import (
     ScrapeError,
     TARGETS,
+    build_snapshot,
     clean_chunks,
-    extract_chunks,
-    html_to_snapshot,
     normalize,
     save_snapshot,
     scrape_wayback,
+    text_to_blocks,
     validate,
     wayback_captures,
 )
@@ -53,47 +54,56 @@ def test_normalize_strips_zero_width_characters():
     assert normalize("pol​icy﻿") == "policy"
 
 
-# ─── extract_chunks ──────────────────────────────────────────────────────────
+# ─── text_to_blocks ──────────────────────────────────────────────────────────
 
-PAGE = """
-<html><body>
-  <nav><p>This navigation paragraph is long enough to pass the length filter.</p></nav>
-  <main>
-    <h1>A heading that is comfortably longer than forty characters</h1>
-    <p>Short.</p>
-    <p>A paragraph of policy text that is comfortably longer than forty characters.</p>
-    <div>Text in a div is ignored because div is not a collected tag, however long.</div>
-  </main>
-</body></html>
-"""
+def test_blocks_keep_every_line_however_short():
+    assert text_to_blocks("location\n\ndevice names\nNote") == ["location", "device names", "Note"]
 
 
-def test_extract_keeps_document_order_and_only_requested_tags():
-    chunks = extract_chunks(PAGE, ["h1", "p"], min_len=40)
-    assert chunks == [
-        "This navigation paragraph is long enough to pass the length filter.",
-        "A heading that is comfortably longer than forty characters",
-        "A paragraph of policy text that is comfortably longer than forty characters.",
+def test_blocks_keep_heading_and_list_markers():
+    assert text_to_blocks("# Change log\n- Sign into Azure") == ["# Change log", "- Sign into Azure"]
+
+
+def test_marker_on_its_own_line_attaches_to_the_next_line():
+    assert text_to_blocks("•\nInformation that is available on the internet") == [
+        "- Information that is available on the internet"
+    ]
+    assert text_to_blocks("#\n\nWhat is generative AI?") == ["# What is generative AI?"]
+
+
+def test_stacked_markers_collapse_and_heading_wins():
+    assert text_to_blocks("- • Privacy and security") == ["- Privacy and security"]
+    assert text_to_blocks("-\n# A heading inside a list item") == ["# A heading inside a list item"]
+
+
+def test_marker_does_not_leak_past_a_line_it_was_used_on():
+    assert text_to_blocks("- item\nplain paragraph") == ["- item", "plain paragraph"]
+
+
+def test_table_rows_become_pipe_separated():
+    assert text_to_blocks("Date\tChanges\n3 October 2025\tRenamed") == [
+        "Date | Changes", "3 October 2025 | Renamed",
     ]
 
 
-def test_extract_drops_chunks_at_or_below_min_len():
-    assert "Short." not in extract_chunks(PAGE, ["p"], min_len=6)  # len("Short.") == 6
-    assert "Short." in extract_chunks(PAGE, ["p"], min_len=5)
+def test_lines_without_letters_or_digits_are_skipped():
+    assert text_to_blocks("{\n.\n\u2060\nreal text\n}") == ["real text"]
 
 
-def test_extract_scopes_to_root_selector():
-    chunks = extract_chunks(PAGE, ["h1", "p"], min_len=40, root="main")
-    assert not any("navigation" in c for c in chunks)
-    assert len(chunks) == 2
+def test_blocks_apply_drop_patterns_and_strip_strings():
+    text = "Copy\nExecute Agreement (opens in a new window)\nCopy this value"
+    assert text_to_blocks(text, drop=[r"^Copy$"], strip=["(opens in a new window)"]) == [
+        "Execute Agreement", "Copy this value",
+    ]
 
 
-def test_extract_falls_back_to_whole_page_when_root_is_missing():
-    assert extract_chunks(PAGE, ["p"], root="article") == extract_chunks(PAGE, ["p"])
+def test_blocks_normalise_whitespace():
+    assert text_to_blocks("Privacy\u00a0Policy   and\u200b more") == ["Privacy Policy and more"]
 
 
-def test_extract_of_empty_page_is_empty():
-    assert extract_chunks("", ["p"]) == []
+def test_blocks_of_empty_text():
+    assert text_to_blocks("") == []
+    assert text_to_blocks("\n \n\t\n") == []
 
 
 # ─── clean_chunks ────────────────────────────────────────────────────────────
@@ -194,9 +204,43 @@ def test_validate_accepts_a_real_openai_snapshot():
     assert validate("openai", text, TARGETS["openai"]["min_chars"])
 
 
-def test_pipeline_rejects_an_empty_page():
+def test_validate_requires_headings():
+    text = "# one\n\n" + "body text " * 50
+    assert validate("x", text, min_chars=10, min_headings=1)
+    with pytest.raises(ScrapeError, match="only 1 headings found, expected at least 3"):
+        validate("x", text, min_chars=10, min_headings=3)
+
+
+def test_validate_does_not_count_a_hash_inside_a_line_as_a_heading():
+    with pytest.raises(ScrapeError, match="only 0 headings"):
+        validate("x", "issue # 4 is tracked " * 20, min_chars=10, min_headings=1)
+
+
+# ─── build_snapshot ──────────────────────────────────────────────────────────
+
+RENDERED = "# Title\n\n" + "\n".join(f"# Section {i}\nParagraph {i} of policy text." for i in range(400))
+
+
+def test_build_snapshot_writes_header_then_blocks():
+    snapshot = build_snapshot("google", RENDERED, "https://support.google.com/x")
+    lines = snapshot.split("\n\n")
+    assert lines[0] == "[format: 2]\n[source: https://support.google.com/x]"
+    assert lines[1:4] == ["# Title", "# Section 0", "Paragraph 0 of policy text."]
+
+
+def test_build_snapshot_puts_extra_header_lines_after_source():
+    snapshot = build_snapshot("google", RENDERED, "u", extra_header=("[Wayback snapshot: 2026]",))
+    assert snapshot.startswith("[format: 2]\n[source: u]\n[Wayback snapshot: 2026]\n\n")
+
+
+def test_build_snapshot_rejects_an_empty_page():
     with pytest.raises(ScrapeError):
-        html_to_snapshot("google", "<html><body></body></html>")
+        build_snapshot("google", "", "u")
+
+
+def test_build_snapshot_rejects_a_page_with_no_headings():
+    with pytest.raises(ScrapeError, match="headings"):
+        build_snapshot("google", "plain line of text\n" * 600, "u")
 
 
 # ─── wayback ─────────────────────────────────────────────────────────────────
@@ -211,8 +255,22 @@ class FakeResponse:
         return self._json
 
 
-GOOD_PAGE = "<p>" + "A sentence of data processing addendum text. " * 200 + "</p>"
-BLOCK_PAGE = "<p>We recognize this might be a false positive designation, sorry about that.</p>"
+GOOD_PAGE = "\n".join(f"# {i}. Clause\nA sentence of data processing addendum text." for i in range(400))
+BLOCK_PAGE = "We recognize this might be a false positive designation, sorry about that."
+
+
+@pytest.fixture(autouse=True)
+def no_browser(monkeypatch):
+    """Wayback tests feed rendered text straight through instead of
+    launching Chromium; rendering itself is tested in test_extract.py."""
+    async def fake_render(html, cfg):
+        return html
+    monkeypatch.setattr(scrape, "render_html", fake_render)
+
+
+def run_wayback(get):
+    import asyncio
+    return asyncio.run(scrape_wayback("openai", get=get))
 CDX_ROWS = [
     ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
     ["k", "20261001000000", "https://openai.com/p/", "text/html", "200", "d", "1"],
@@ -241,26 +299,29 @@ def test_wayback_captures_empty_response():
 
 def test_wayback_skips_block_page_and_uses_previous_capture():
     pages = {"20261028000000": BLOCK_PAGE, "20261020000000": GOOD_PAGE, "20261001000000": GOOD_PAGE}
-    result = scrape_wayback("openai", get=fake_get(pages))
-    assert result.startswith("[Wayback snapshot: 20261020000000]\n[URL: https://web.archive.org/web/20261020000000/")
+    result = run_wayback(get=fake_get(pages))
+    assert result.startswith(
+        "[format: 2]\n[source: https://openai.com/p/]\n"
+        "[Wayback snapshot: 20261020000000]\n[URL: https://web.archive.org/web/20261020000000/"
+    )
 
 
 def test_wayback_fails_when_every_capture_is_blocked():
     pages = dict.fromkeys(["20261028000000", "20261020000000", "20261001000000"], BLOCK_PAGE)
     with pytest.raises(ScrapeError, match="no usable capture"):
-        scrape_wayback("openai", get=fake_get(pages))
+        run_wayback(get=fake_get(pages))
 
 
 def test_wayback_fails_when_there_are_no_captures():
     with pytest.raises(ScrapeError, match="no Wayback captures"):
-        scrape_wayback("openai", get=fake_get({}, cdx=CDX_ROWS[:1]))
+        run_wayback(get=fake_get({}, cdx=CDX_ROWS[:1]))
 
 
 def test_wayback_lookup_error_becomes_scrape_error():
     def boom(*a, **k):
         raise ConnectionError("down")
     with pytest.raises(ScrapeError, match="CDX lookup failed"):
-        scrape_wayback("openai", get=boom)
+        run_wayback(get=boom)
 
 
 # ─── save_snapshot ───────────────────────────────────────────────────────────

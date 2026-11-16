@@ -41,16 +41,23 @@ March – November 2026, 36 weekly snapshots. Seven weeks in which the wording m
 
 ## how it works
 
-A GitHub Actions workflow runs every Monday at 9am UTC. It scrapes each target page, extracts the meaningful text, and commits a dated snapshot to this repository.
+A GitHub Actions workflow runs every Monday at 9am UTC. It opens each target page in a headless browser, reads it, and commits a dated snapshot to this repository.
 
 OpenAI's policy pages actively block automated access. Their snapshots are retrieved via the Internet Archive instead — a layer of mediation that is itself part of the record.
 
-Before anything is saved, each scrape is cleaned and checked:
+For each page the scraper:
 
-- **cleaning** — side navigation, sign-in banners and "related articles" lists are dropped, list items captured more than once are collapsed, and invisible whitespace is normalised. Without this, Meta's page appeared to change almost every week because one nav link kept appearing and disappearing.
-- **validation** — if the text contains a bot-wall phrase or is far shorter than the page should be, nothing is written and the workflow run fails. For OpenAI, the scraper walks back through recent Wayback captures until it finds one that is actually the policy.
+- **opens every collapsed section** — accordions and "show more" toggles inside the content area are clicked first.
+- **reads the content container as rendered** — the text a reader would see, in reading order, with site navigation, footers, language pickers and hidden duplicates left out. Headings are kept and marked `# `, list items `- `, table rows `cell | cell`. Nothing is filtered by length.
+- **validates before saving** — if the text contains a bot-wall phrase, is far shorter than the page should be, or has too few headings, nothing is written and the workflow run fails. For OpenAI, the scraper walks back through recent Wayback captures until it finds one that is actually the policy.
 
-Snapshots taken before November 2026 are stored as originally scraped, noise included. They are left untouched; the diff viewer applies the same cleaning when it reads them.
+Each snapshot starts with a short header recording the format and the URL the page actually resolved to.
+
+### two formats
+
+Until November 2026 the scraper collected `<p>`, `<li>` and heading tags and threw away anything of 40 characters or fewer (60 for Meta). Comparing the snapshots against the live pages showed what that cost: Google's list of the data Assistant uses ("location", "device names"…), every FAQ question, OpenAI's "Updated" and "Effective" dates, Microsoft's own change-log table, and most section headings were never archived. A change to any of those would have gone unrecorded.
+
+Those earlier snapshots (format 1) are left untouched. Snapshots with a `[format: 2]` header come from the structural extractor described above. The diff viewer never compares across the two: the week the format changed is marked as a scraper change, not a policy change.
 
 `diff.py` compares each snapshot with the one before it and builds a static page listing every week in which the text changed, with reworded paragraphs marked word by word. It is rebuilt and published to GitHub Pages after every scrape.
 
@@ -78,19 +85,19 @@ snapshots/
  
 ## technical
  
-Built with Python, Playwright, BeautifulSoup, and GitHub Actions. There is no database - the repository history is the data structure.
+Built with Python, Playwright, and GitHub Actions. There is no database - the repository history is the data structure.
 
-Each target is one entry in `TARGETS` in `scrape.py` (url, tags to collect, boilerplate patterns, minimum length). Adding a page to watch means adding an entry.
+Each target is one entry in `TARGETS` in `scrape.py` (url, content container, boilerplate patterns, minimum length and heading count). Adding a page to watch means adding an entry.
 
 ```bash
 pip install -r requirements-dev.txt
-playwright install chromium   # only needed to run the scraper itself
-pytest                        # 66 tests, no network
+playwright install chromium
+pytest                        # 108 tests, no network
 python scrape.py
 python diff.py                # writes site/index.html
 ```
 
-The tests cover extraction, cleaning, validation, the Wayback fallback, file saving and the diff viewer. Several run against the archive itself: they assert that the recorded nav noise disappears after cleaning and that the real rewrites (Meta, 13 July 2026; Microsoft, 25 May 2026) still show up as changes.
+The tests cover extraction, text handling, validation, the Wayback fallback, file saving and the diff viewer. The extractor is tested in real Chromium against four fixture pages in `tests/fixtures/`, each modelled on the structure of one target's live page. Several other tests run against the archive itself: they assert that the recorded nav noise disappears after cleaning and that the real rewrites (Meta, 13 July 2026; Microsoft, 25 May 2026) still show up as changes.
 
 ---
 

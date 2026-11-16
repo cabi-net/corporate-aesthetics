@@ -192,3 +192,53 @@ def test_every_font_the_page_references_is_in_the_repo():
     root = Path(__file__).parent.parent
     for url in re.findall(r"url\('([^']+)'\)", diff.CSS):
         assert (root / url).is_file(), url
+
+
+# ─── snapshot formats ────────────────────────────────────────────────────────
+
+V2 = "[format: 2]\n[source: https://example.test/p]\n\n# Heading\n\n- device names\n\n- device names\n\nMenu: a b"
+
+
+def test_format_2_snapshots_are_not_cleaned_or_deduplicated():
+    paragraphs, header = parse_snapshot(V2, drop=[r"^Menu:"])
+    assert paragraphs == ["# Heading", "- device names", "- device names", "Menu: a b"]
+    assert header == "[format: 2] [source: https://example.test/p]"
+
+
+def test_snapshot_format_detection():
+    assert diff.snapshot_format(None) == 1
+    assert diff.snapshot_format("[Wayback snapshot: 2026] [URL: x]") == 1
+    assert diff.snapshot_format("[format: 2] [source: x]") == 2
+
+
+def test_format_2_wayback_header_is_still_shown_without_the_format_lines():
+    snaps = [
+        ("2026-12-01", ["a"], "[format: 2] [source: u] [Wayback snapshot: 1] [URL: w1]"),
+        ("2026-12-08", ["b"], "[format: 2] [source: u] [Wayback snapshot: 2] [URL: w2]"),
+    ]
+    assert find_changes(snaps)[0]["wayback"] == "[Wayback snapshot: 2] [URL: w2]"
+
+
+FORMAT_SWITCH = [
+    ("2026-11-09", ["a long paragraph"], None),
+    ("2026-11-16", ["# Heading", "a long paragraph", "- short item"], "[format: 2] [source: u]"),
+    ("2026-11-23", ["# Heading", "a long paragraph", "- short item, reworded"], "[format: 2] [source: u]"),
+]
+
+
+def test_scraper_change_is_flagged_and_not_diffed():
+    newest, switch = find_changes(FORMAT_SWITCH)
+    assert switch["format_change"] is True and switch["ops"] == []
+    assert "format_change" not in newest and newest["ops"]
+
+
+def test_scraper_change_is_not_counted_or_shown_as_a_policy_change():
+    out = render_institution("meta", FORMAT_SWITCH, find_changes(FORMAT_SWITCH))
+    assert "3 snapshots since 2026-11-09 &middot; 1 change " in out
+    assert "the scraper changed how it reads this page" in out
+    assert out.count('class="change"') == 1
+
+
+def test_only_a_scraper_change_still_reads_as_no_change_in_wording():
+    out = render_institution("meta", FORMAT_SWITCH[:2], find_changes(FORMAT_SWITCH[:2]))
+    assert "0 changes" in out and "no change in wording" in out

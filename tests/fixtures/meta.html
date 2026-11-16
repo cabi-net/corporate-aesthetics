@@ -1,0 +1,31 @@
+<!-- modelled on privacycenter.instagram.com/privacy/genai: no content container, text in
+     spans, sections are collapsed div[role=button], bullets are their own block, and a
+     second hidden copy of the page sits in the DOM -->
+<html><body>
+<nav aria-label="Privacy Center">
+  <div role="button" aria-expanded="false" onclick="document.getElementById('navmenu').style.display='block'"><span>Privacy Policy</span></div>
+  <div id="navmenu" style="display:none"><span>What is the Privacy Policy and what does it cover?</span></div>
+</nav>
+<div><div>
+  <h2><span>How Meta uses information for generative AI models and features</span></h2>
+  <div role="heading"><span>AI at Meta</span></div>
+  <div><span>We are committed to building responsibly.</span></div>
+  <div role="button" aria-expanded="false"
+       onclick="this.setAttribute('aria-expanded','true');document.getElementById('s1').style.display='block'">
+    <h3><span>Where does Meta get training information?</span></h3></div>
+  <div id="s1" style="display:none">
+    <div><span>A combination of sources are used for training including:</span></div>
+    <div><div><span>•</span></div><div><span>Information that is available on the internet</span></div></div>
+    <div><div><span>•</span></div><div><span>Information from third parties that provide content, including <a href="#">contributor tier</a> models</span></div></div>
+    <div><span>We do not use the content of your private messages unless you share them with <a href="#"><span>our AIs</span></a>.</span></div>
+  </div>
+  <div role="button" aria-expanded="false"
+       onclick="this.setAttribute('aria-expanded','true');document.getElementById('s2').style.display='block'">
+    <h3><span>Privacy and generative AI</span></h3></div>
+  <div id="s2" style="display:none"><div><span>We have a robust internal Privacy Review process.</span></div></div>
+</div></div>
+<div style="display:none">
+  <h2><span>How Meta uses information for generative AI models and features</span></h2>
+  <div><span>We are committed to building responsibly.</span></div>
+</div>
+</body></html>
