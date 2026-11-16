@@ -301,8 +301,17 @@ async def render_html(html, cfg):
 
 # ─── wayback ─────────────────────────────────────────────────────────────────
 
-def wayback_captures(url, limit=8, get=requests.get):
-    """Newest-first (timestamp, original_url) pairs from the Wayback CDX index."""
+MIN_CAPTURE_BYTES = 20000  # a bot-wall capture is a few KB; the real page is far larger
+MAX_CAPTURE_FETCHES = 8
+
+
+def wayback_captures(url, limit=80, get=requests.get):
+    """Newest-first (timestamp, original_url) pairs from the Wayback CDX index.
+
+    The Archive's own crawler gets bot-walled too, sometimes for weeks, so
+    this looks a long way back and skips captures too small to be the page.
+    A capture whose size the index doesn't report is kept.
+    """
     response = get(
         "https://web.archive.org/cdx/search/cdx",
         params={
@@ -315,8 +324,13 @@ def wayback_captures(url, limit=8, get=requests.get):
     )
     if not response.text.strip():
         return []
-    rows = response.json()[1:]  # first row is the column header
-    return [(row[1], row[2]) for row in reversed(rows)]
+    captures = []
+    for row in reversed(response.json()[1:]):  # first row is the column header
+        size = row[6] if len(row) > 6 else ""
+        if str(size).isdigit() and int(size) < MIN_CAPTURE_BYTES:
+            continue
+        captures.append((row[1], row[2]))
+    return captures
 
 
 async def scrape_wayback(name, get=requests.get):
@@ -331,6 +345,7 @@ async def scrape_wayback(name, get=requests.get):
     if not captures:
         raise ScrapeError(f"{name}: no Wayback captures found")
 
+    captures = captures[:MAX_CAPTURE_FETCHES]
     last_error = None
     for timestamp, original in captures:
         snapshot_url = f"https://web.archive.org/web/{timestamp}/{original}"

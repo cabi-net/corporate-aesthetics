@@ -273,9 +273,9 @@ def run_wayback(get):
     return asyncio.run(scrape_wayback("openai", get=get))
 CDX_ROWS = [
     ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
-    ["k", "20261001000000", "https://openai.com/p/", "text/html", "200", "d", "1"],
-    ["k", "20261020000000", "https://openai.com/p/", "text/html", "200", "d", "1"],
-    ["k", "20261028000000", "https://openai.com/p/", "text/html", "200", "d", "1"],
+    ["k", "20261001000000", "https://openai.com/p/", "text/html", "200", "d", "50000"],
+    ["k", "20261020000000", "https://openai.com/p/", "text/html", "200", "d", "50000"],
+    ["k", "20261028000000", "https://openai.com/p/", "text/html", "200", "d", "50000"],
 ]
 
 
@@ -291,6 +291,40 @@ def fake_get(pages, cdx=CDX_ROWS):
 def test_wayback_captures_are_newest_first_without_header():
     captures = wayback_captures("openai.com/p/", get=fake_get({}))
     assert [t for t, _ in captures] == ["20261028000000", "20261020000000", "20261001000000"]
+
+
+def test_wayback_captures_skip_ones_too_small_to_be_the_page():
+    rows = [
+        CDX_ROWS[0],
+        ["k", "20261001000000", "https://openai.com/p/", "text/html", "200", "d", "61234"],
+        ["k", "20261020000000", "https://openai.com/p/", "text/html", "200", "d", "2140"],   # bot wall
+        ["k", "20261028000000", "https://openai.com/p/", "text/html", "200", "d", "-"],      # size unknown
+    ]
+    captures = wayback_captures("openai.com/p/", get=fake_get({}, cdx=rows))
+    assert [t for t, _ in captures] == ["20261028000000", "20261001000000"]
+
+
+def test_wayback_looks_far_enough_back_to_get_past_weeks_of_bot_walls():
+    asked = {}
+    def get(url, params=None, timeout=None):
+        asked.update(params)
+        return FakeResponse(text="x", json_data=CDX_ROWS)
+    wayback_captures("openai.com/p/", get=get)
+    assert asked["limit"] == "-80" and asked["filter"] == "statuscode:200"
+
+
+def test_wayback_gives_up_after_a_bounded_number_of_fetches():
+    stamps = [f"202610{d:02d}000000" for d in range(1, 21)]
+    rows = [CDX_ROWS[0]] + [["k", t, "https://openai.com/p/", "text/html", "200", "d", "50000"] for t in stamps]
+    fetched = []
+    def get(url, params=None, timeout=None):
+        if "cdx" in url:
+            return FakeResponse(text="x", json_data=rows)
+        fetched.append(url)
+        return FakeResponse(text=BLOCK_PAGE)
+    with pytest.raises(ScrapeError, match="no usable capture in the last 8"):
+        run_wayback(get=get)
+    assert len(fetched) == scrape.MAX_CAPTURE_FETCHES
 
 
 def test_wayback_captures_empty_response():

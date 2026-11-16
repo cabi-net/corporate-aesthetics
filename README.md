@@ -92,7 +92,7 @@ Each target is one entry in `TARGETS` in `scrape.py` (url, content container, bo
 ```bash
 pip install -r requirements-dev.txt
 playwright install chromium
-pytest                        # 108 tests, no network
+pytest                        # 111 tests, no network
 python scrape.py
 python diff.py                # writes site/index.html
 ```
