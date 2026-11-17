@@ -67,7 +67,7 @@ TARGETS = {
         "method": "live",
         "url": "https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy",
         "root": "main .content",
-        "remove": [".codeHeader"],  # code-block language label + copy button
+        "remove": [".code-block-header"],  # code-block language label + copy button
         "drop": [
             r"^Access to this page requires authorization",
             r"^(Copy|Expand table|JSON)$",  # table button; code labels in format-1
