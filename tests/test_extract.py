@@ -126,6 +126,25 @@ def test_microsoft_drops_hidden_sign_in_notice_outline_and_buttons():
     assert "© Microsoft" not in text
 
 
+def test_microsoft_reads_every_tab_panel_under_its_tab_name():
+    b = blocks("microsoft")
+    portal = b.index("# Using the Azure portal")
+    cli = b.index("# Using the Azure CLI (or other management API)")
+    assert b[portal + 1] == "Go to the resource Overview page"
+    # the closed tab, which the first version of the extractor missed
+    assert b[cli + 1] == "Execute the following command in Azure CLI to see the same JSON data."
+    assert b[cli + 2] == "az cognitiveservices account show -n resource_name -g resource_group"
+
+
+def test_microsoft_code_block_labels_are_removed_not_just_filtered():
+    assert "Azure CLI" not in blocks("microsoft")
+
+
+def test_microsoft_tab_strip_is_not_also_read_as_a_list():
+    assert "- Using the Azure portal" not in blocks("microsoft")
+    assert sum("Using the Azure portal" in x for x in blocks("microsoft")) == 1
+
+
 def test_microsoft_keeps_code_sample_values():
     assert '"value":"false"' in blocks("microsoft")
 

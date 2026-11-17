@@ -18,6 +18,17 @@
   "name":"ContentLogging",
   "value":"false"
 }</code></pre>
+    <div class="tabGroup" id="tabgroup_1">
+      <ul role="tablist">
+        <li role="presentation"><a role="tab" aria-controls="tabpanel_1_azure-portal" aria-selected="true">Using the Azure portal</a></li>
+        <li role="presentation"><a role="tab" aria-controls="tabpanel_1_azure-cli" aria-selected="false">Using the Azure CLI (or other management API)</a></li>
+      </ul>
+      <section id="tabpanel_1_azure-portal" role="tabpanel"><p>Go to the resource Overview page</p></section>
+      <section id="tabpanel_1_azure-cli" role="tabpanel" hidden="hidden" aria-hidden="true">
+        <p>Execute the following command in Azure CLI to see the same JSON data.</p>
+        <div class="codeHeader"><span class="language">Azure CLI</span><button>Copy</button></div>
+        <pre><code>az cognitiveservices account show -n resource_name -g resource_group</code></pre></section>
+    </div>
     <h2>Change log</h2>
     <button>Expand table</button>
     <table><thead><tr><th>Date</th><th>Changes</th></tr></thead>

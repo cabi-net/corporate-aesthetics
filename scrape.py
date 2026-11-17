@@ -33,6 +33,7 @@ FORMAT = 2  # 1 = tag/length filter (to Nov 2026), 2 = structural extraction
 # min_chars     a valid snapshot is at least this long
 # min_headings  ...and has at least this many headings
 # headings      extra selectors to treat as headings (h1–h6 always are)
+# remove        extra selectors for elements to delete before reading
 # drop          regexes for boilerplate lines that survive root scoping
 # strip         literal strings removed from inside lines
 # wait          ms to wait after load
@@ -66,9 +67,10 @@ TARGETS = {
         "method": "live",
         "url": "https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy",
         "root": "main .content",
+        "remove": [".codeHeader"],  # code-block language label + copy button
         "drop": [
             r"^Access to this page requires authorization",
-            r"^(Copy|Expand table|JSON)$",  # code-block and table buttons
+            r"^(Copy|Expand table|JSON)$",  # table button; code labels in format-1
         ],
         "min_chars": 12000,
         "min_headings": 8,
@@ -110,7 +112,8 @@ class ScrapeError(Exception):
 
 # ─── in-page extraction ──────────────────────────────────────────────────────
 #
-# Runs inside the browser. Opens collapsed sections, removes site chrome,
+# Runs inside the browser. Opens collapsed sections and every tab panel,
+# removes site chrome,
 # marks headings with "# " and list items with "- ", then returns the
 # rendered text (innerText), which follows reading order and leaves out
 # anything the page hides.
@@ -134,10 +137,28 @@ async (cfg) => {
     await sleep(cfg.clickDelay ?? 300);
   }
 
+  // tab groups: show every panel, each under its tab's name as a heading,
+  // and drop the tab strip itself
+  for (const root of roots()) {
+    root.querySelectorAll('[role=tab]').forEach((tab) => {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') || '');
+      if (!panel || !root.contains(panel)) return;
+      const label = document.createElement('h6');
+      label.textContent = tab.textContent.trim();
+      panel.prepend(label);
+    });
+    root.querySelectorAll('[role=tabpanel]').forEach((panel) => {
+      panel.hidden = false;
+      panel.removeAttribute('aria-hidden');
+      panel.style.display = 'block';
+    });
+    root.querySelectorAll('[role=tablist]').forEach((el) => el.remove());
+  }
+
   const HEADINGS = 'h1, h2, h3, h4, h5, h6, [role=heading]' + (cfg.headings ? ', ' + cfg.headings : '');
   const parts = [];
   for (const root of roots()) {
-    root.querySelectorAll(CHROME).forEach((el) => el.remove());
+    root.querySelectorAll(CHROME + (cfg.remove ? ', ' + cfg.remove : '')).forEach((el) => el.remove());
     root.querySelectorAll(HEADINGS).forEach((h) => {
       h.prepend(document.createTextNode('\\n\\n# '));
       h.append(document.createTextNode('\\n\\n'));
@@ -261,7 +282,12 @@ def build_snapshot(name, rendered_text, source, extra_header=()):
 # ─── browser ─────────────────────────────────────────────────────────────────
 
 def _extract_args(cfg, click_delay=300):
-    return {"root": cfg.get("root"), "headings": cfg.get("headings"), "clickDelay": click_delay}
+    return {
+        "root": cfg.get("root"),
+        "headings": cfg.get("headings"),
+        "remove": ", ".join(cfg.get("remove", ())) or None,
+        "clickDelay": click_delay,
+    }
 
 
 async def render_live(cfg):
