@@ -140,8 +140,8 @@ def test_microsoft_code_block_labels_are_removed_not_just_filtered():
     # removed by the "remove" selector, so a new language label can't slip
     # through the way "Azure CLI" did when only "JSON" was in the drop list
     rendered = asyncio.run(render_html((FIXTURES / "microsoft.html").read_text(encoding="utf-8"), TARGETS["microsoft"]))
-    lines = {line.strip() for line in rendered.split("\n")}
-    assert not {"Azure CLI", "JSON", "Copy"} & lines
+    lines = [line.strip() for line in rendered.split("\n")]
+    assert not [line for line in lines if line.startswith(("Azure CLI", "JSON", "Copy"))]
 
 
 def test_microsoft_tab_strip_is_not_also_read_as_a_list():

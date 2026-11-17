@@ -167,8 +167,6 @@ There will be a value in the Capabilities list called "ContentLogging" which wil
 
 Execute the following command in Azure CLI to see the same JSON data as shown in the Azure portal above.
 
-Azure CLI
-
 az cognitiveservices account show -n resource\_name -g resource \_group
 
 To learn more about Microsoft's privacy and security commitments see the Microsoft Trust Center.
