@@ -28,8 +28,8 @@ FORMAT = 2  # 1 = tag/length filter (to Nov 2026), 2 = structural extraction
 
 # ─── targets ─────────────────────────────────────────────────────────────────
 #
-# root          CSS selector for the content container(s); None = whole page
-#               minus navigation
+# root          CSS selector for the content container(s), read in page order;
+#               None = whole page minus navigation
 # min_chars     a valid snapshot is at least this long
 # min_headings  ...and has at least this many headings
 # headings      extra selectors to treat as headings (h1–h6 always are)
@@ -76,6 +76,18 @@ TARGETS = {
         "min_headings": 8,
         "wait": 4000,
     },
+    "anthropic": {
+        "method": "live",
+        "url": "https://www.anthropic.com/legal/privacy",
+        # the article's own <header> holds the title and effective date next to
+        # a section menu and download button, so read the title, the metadata
+        # list and the body rather than the whole article
+        "root": "main article h1, main article header dl, main article > header ~ div",
+        "drop": [r"^Version history"],
+        "min_chars": 30000,
+        "min_headings": 10,
+        "wait": 3000,
+    },
     "openai": {
         "method": "wayback",
         "url": "https://openai.com/policies/data-processing-addendum/",
@@ -112,8 +124,9 @@ class ScrapeError(Exception):
 
 # ─── in-page extraction ──────────────────────────────────────────────────────
 #
-# Runs inside the browser. Opens collapsed sections and every tab panel,
-# removes site chrome,
+# Runs inside the browser. Opens collapsed sections (never popups) and every
+# tab panel, removes site chrome, puts definition-list pairs and ARIA table
+# rows on one line each,
 # marks headings with "# " and list items with "- ", then returns the
 # rendered text (innerText), which follows reading order and leaves out
 # anything the page hides.
@@ -122,13 +135,16 @@ EXTRACT_JS = """
 async (cfg) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const CHROME = 'nav, header, footer, [role=navigation], [role=banner], [role=dialog], ' +
-    'select, .sr-only, .visually-hidden, script, style, noscript';
+    'select, .sr-only, .visually-hidden, script, style, noscript' +
+    (cfg.remove ? ', ' + cfg.remove : '');
+  // toggles that open a popup (menus, pickers, dialogs) are page controls, not content
+  const NO_CLICK = CHROME + ', [aria-haspopup]:not([aria-haspopup="false"]), [role=combobox]';
   const roots = () => (cfg.root ? [...document.querySelectorAll(cfg.root)] : [document.body]);
 
   for (let round = 0; round < 3; round++) {
     const closed = roots()
       .flatMap((r) => [...r.querySelectorAll('[aria-expanded="false"]')])
-      .filter((el) => !el.closest(CHROME) && el.getClientRects().length);
+      .filter((el) => !el.closest(NO_CLICK) && el.getClientRects().length);
     if (!closed.length) break;
     for (const el of closed) {
       try { el.click(); } catch (e) {}
@@ -156,10 +172,30 @@ async (cfg) => {
   }
 
   const HEADINGS = 'h1, h2, h3, h4, h5, h6, [role=heading]' + (cfg.headings ? ', ' + cfg.headings : '');
+  const flat = (el) => el.innerText.split('\\n').map((s) => s.trim()).filter(Boolean).join('; ');
   const parts = [];
   for (const root of roots()) {
-    root.querySelectorAll(CHROME + (cfg.remove ? ', ' + cfg.remove : '')).forEach((el) => el.remove());
-    root.querySelectorAll(HEADINGS).forEach((h) => {
+    root.querySelectorAll(CHROME).forEach((el) => el.remove());
+
+    // definition lists: "term: value" on one line
+    root.querySelectorAll('dt').forEach((dt) => {
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.tagName !== 'DD') return;
+      dt.textContent = dt.textContent.trim() + ': ' + flat(dd);
+      dd.remove();
+    });
+
+    // tables built from divs with ARIA roles: one line per row, "cell | cell"
+    root.querySelectorAll('[role=row]').forEach((row) => {
+      const cells = [...row.querySelectorAll('[role=cell], [role=gridcell], [role=columnheader], [role=rowheader]')]
+        .filter((c) => c.closest('[role=row]') === row);
+      if (!cells.length) return;
+      const line = document.createElement('div');
+      line.textContent = cells.map(flat).join(' | ');
+      row.replaceWith(line);
+    });
+
+    [root, ...root.querySelectorAll(HEADINGS)].filter((h) => h.matches(HEADINGS)).forEach((h) => {
       h.prepend(document.createTextNode('\\n\\n# '));
       h.append(document.createTextNode('\\n\\n'));
     });

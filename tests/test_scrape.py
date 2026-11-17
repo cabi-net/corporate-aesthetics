@@ -393,5 +393,5 @@ def test_main_saves_good_targets_and_exits_nonzero_when_one_fails(monkeypatch, t
 
     import asyncio
     assert asyncio.run(scrape.main()) == 1
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["google", "meta", "microsoft"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["anthropic", "google", "meta", "microsoft"]
     assert "1 target(s) failed: openai" in capsys.readouterr().out

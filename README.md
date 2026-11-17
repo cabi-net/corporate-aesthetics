@@ -9,6 +9,7 @@ An automated archive that watches the language of institutional AI and data priv
  
 | institution | page | method |
 |---|---|---|
+| Anthropic | [Privacy Policy](https://www.anthropic.com/legal/privacy) | Playwright |
 | Google | [How Google Assistant works with your data](https://support.google.com/assistant/answer/11091015?hl=en) | Playwright |
 | Meta | [How Meta uses information for generative AI models](https://privacycenter.instagram.com/privacy/genai/) | Playwright |
 | Microsoft | [Data, privacy, and security for Models sold by Azure](https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy) | Playwright |
@@ -34,6 +35,8 @@ March – November 2026, 36 weekly snapshots. Seven weeks in which the wording m
 - **9 November** — a new section on how content stored by the Responses API is encrypted.
 
 **Google** — no change in wording.
+
+**Anthropic** — archived from 17 November 2026.
 
 **OpenAI** — no change in the wording of the addendum itself across the Wayback captures collected; only the site's menus changed.
 
@@ -92,7 +95,7 @@ Each target is one entry in `TARGETS` in `scrape.py` (url, content container, bo
 ```bash
 pip install -r requirements-dev.txt
 playwright install chromium
-pytest                        # 114 tests, no network
+pytest                        # 120 tests, no network
 python scrape.py
 python diff.py                # writes site/index.html
 ```

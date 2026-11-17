@@ -194,9 +194,50 @@ def test_page_scripts_do_not_run_on_saved_html():
     assert "client-side rendering wiped the page" not in "\n".join(blocks("openai"))
 
 
+# ─── anthropic ───────────────────────────────────────────────────────────────
+
+def test_anthropic_reads_title_and_metadata_from_the_article_header():
+    b = blocks("anthropic")
+    assert b[:3] == ("# Privacy Policy", "Effective: Sep 10, 2026", "Audience: Individual")
+
+
+def test_anthropic_skips_the_section_menu_download_button_and_toc():
+    text = "\n".join(blocks("anthropic"))
+    assert "01Collection" not in text and "02Uses" not in text
+    assert "Download PDF" not in text and "Legal center" not in text
+
+
+def test_popup_toggles_are_never_clicked():
+    # the language picker and "see version history" open popups; clicking
+    # them would pull a language list or old versions into the snapshot
+    text = "\n".join(blocks("anthropic"))
+    assert "Deutsch" not in text
+    assert "Previous version" not in text
+    assert "Language: English" in blocks("anthropic")
+    assert not any(x.startswith("Version history") for x in blocks("anthropic"))
+
+
+def test_anthropic_aria_table_keeps_rows_and_columns_together():
+    b = blocks("anthropic")
+    assert "Purpose | Type of Data | Legal Basis" in b
+    assert ("To provide, maintain and facilitate any products and services"
+            " | Identity and Contact Data; Payment Information | Contract") in b
+    assert ("To investigate and resolve disputes | Inputs and Outputs"
+            " | Legitimate interests; It is in our legitimate interests to resolve disputes.") in b
+    assert "- Contract" not in b  # cells are not also read as loose list items
+
+
+def test_anthropic_body_headings_and_lists():
+    b = blocks("anthropic")
+    assert "# 1. Collection of Personal Data" in b
+    assert "# Personal data we collect or receive to train our models" in b
+    assert "- Data that we generate internally" in b
+    assert not any("© 2026 Anthropic" in x for x in b)
+
+
 # ─── whole pipeline ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("name", ["google", "meta", "microsoft", "openai"])
+@pytest.mark.parametrize("name", ["anthropic", "google", "meta", "microsoft", "openai"])
 def test_fixture_snapshot_has_a_format_header_and_source(name, monkeypatch):
     html = (FIXTURES / f"{name}.html").read_text(encoding="utf-8")
     monkeypatch.setitem(TARGETS[name], "min_chars", 50)

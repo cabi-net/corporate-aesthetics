@@ -18,7 +18,13 @@ from datetime import datetime, timezone
 
 from scrape import SNAPSHOT_DIR, TARGETS, clean_chunks, normalize
 
-LABELS = {"google": "Google", "meta": "Meta", "microsoft": "Microsoft", "openai": "OpenAI"}
+LABELS = {
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "meta": "Meta",
+    "microsoft": "Microsoft",
+    "openai": "OpenAI",
+}
 
 DATE_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.txt$")
 
@@ -270,7 +276,7 @@ def render_page(sections, generated_at):
 <div class="wrap">
 <header>
 <h1>corporate aesthetics</h1>
-<p class="subtitle">how four companies reword their AI and data privacy disclosures</p>
+<p class="subtitle">how five companies reword their AI and data privacy disclosures</p>
 <p class="generated">generated {generated_at}</p>
 </header>
 <nav>{nav}</nav>
