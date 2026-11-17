@@ -100,7 +100,7 @@ python scrape.py
 python diff.py                # writes site/index.html
 ```
 
-The tests cover extraction, text handling, validation, the Wayback fallback, file saving and the diff viewer. The extractor is tested in real Chromium against four fixture pages in `tests/fixtures/`, each modelled on the structure of one target's live page. Several other tests run against the archive itself: they assert that the recorded nav noise disappears after cleaning and that the real rewrites (Meta, 13 July 2026; Microsoft, 25 May 2026) still show up as changes.
+The tests cover extraction, text handling, validation, the Wayback fallback, file saving and the diff viewer. The extractor is tested in real Chromium against five fixture pages in `tests/fixtures/`, each modelled on the structure of one target's live page. Several other tests run against the archive itself: they assert that the recorded nav noise disappears after cleaning and that the real rewrites (Meta, 13 July 2026; Microsoft, 25 May 2026) still show up as changes.
 
 ---
 
@@ -114,4 +114,4 @@ Diff viewer: [live](https://cabi-net.github.io/corporate-aesthetics/)
 
 ## a note on infrastructure
 
-This project runs on GitHub, which is owned by Microsoft. Microsoft is one of the four companies whose rhetorical behavior this archive documents. This is not a contradiction to resolve or hide; it is part of the record.
+This project runs on GitHub, which is owned by Microsoft. Microsoft is one of the five companies whose rhetorical behavior this archive documents. This is not a contradiction to resolve or hide; it is part of the record.
