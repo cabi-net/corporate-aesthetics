@@ -1,11 +1,13 @@
 """
 corporate aesthetics — weekly snapshot scraper.
 
-Each target is one entry in TARGETS. A run fetches the page, extracts the
-text, cleans out navigation noise, validates that what came back is really
-the policy (not a block page or an empty shell), and only then writes a
-dated snapshot. A target that fails validation writes nothing and makes the
-run exit non-zero, so the workflow fails visibly instead of archiving junk.
+Each target is one entry in TARGETS. A run opens the page in a headless
+browser, expands every collapsed section, reads the text of the content
+container the way a person would see it (headings, list items and table
+rows kept, however short), validates that what came back is really the
+policy, and only then writes a dated snapshot. A target that fails
+validation writes nothing and makes the run exit non-zero, so the workflow
+fails visibly instead of archiving junk.
 """
 
 import asyncio
@@ -15,7 +17,6 @@ import sys
 from datetime import datetime, timezone
 
 import requests
-from bs4 import BeautifulSoup
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -23,60 +24,83 @@ USER_AGENT = (
 )
 
 SNAPSHOT_DIR = "snapshots"
+FORMAT = 2  # 1 = tag/length filter (to Nov 2026), 2 = structural extraction
 
 # ─── targets ─────────────────────────────────────────────────────────────────
 #
-# tags       elements whose text is collected
-# min_len    shortest chunk worth keeping
-# root       CSS selector to scope extraction to (falls back to whole page)
-# drop       regexes for boilerplate chunks (nav menus, sign-in banners)
-# min_chars  a valid snapshot is at least this long
-# expand     click collapsed accordions before reading the page
-# wait       ms to wait after load
+# root          CSS selector for the content container(s), read in page order;
+#               None = whole page minus navigation
+# min_chars     a valid snapshot is at least this long
+# min_headings  ...and has at least this many headings
+# headings      extra selectors to treat as headings (h1–h6 always are)
+# remove        extra selectors for elements to delete before reading
+# drop          regexes for boilerplate lines that survive root scoping
+# strip         literal strings removed from inside lines
+# wait          ms to wait after load
+#
+# `drop` is also what diff.py uses to clean format-1 snapshots.
 
 TARGETS = {
     "google": {
-        "method": "playwright",
+        "method": "live",
         "url": "https://support.google.com/assistant/answer/11091015?hl=en",
-        "tags": ["h2", "h3", "p", "li"],
-        "min_len": 40,
-        "drop": [r"^\d+ of \d+ "],  # "related articles" list
-        "min_chars": 3000,
+        "root": ".cc",
+        "headings": "a.zippy",  # accordion titles
+        "drop": [r"^\d+ of \d+ "],
+        "min_chars": 5000,
+        "min_headings": 5,
         "wait": 3000,
     },
     "meta": {
-        "method": "playwright",
+        "method": "live",
         "url": "https://privacycenter.instagram.com/privacy/genai/",
-        "tags": ["h1", "h2", "h3", "p", "li", "span"],
-        "min_len": 60,
+        "root": None,  # the page has no content container
         "drop": [
-            r"^Privacy Policy What is the Privacy Policy",  # side nav
-            r"^Other policies and articles",                # side nav
+            r"^Privacy Policy What is the Privacy Policy",
+            r"^Other policies and articles",
         ],
-        "min_chars": 4000,
-        "expand": True,
+        "min_chars": 5000,
+        "min_headings": 4,
         "wait": 4000,
     },
     "microsoft": {
-        "method": "playwright",
+        "method": "live",
         "url": "https://learn.microsoft.com/en-us/legal/cognitive-services/openai/data-privacy",
-        "tags": ["h1", "h2", "h3", "p", "li"],
-        "min_len": 40,
-        "root": "main",
-        "drop": [r"^Access to this page requires authorization"],
-        "min_chars": 6000,
+        "root": "main .content",
+        "remove": [".code-block-header"],  # code-block language label + copy button
+        "drop": [
+            r"^Access to this page requires authorization",
+            r"^(Copy|Expand table|JSON)$",  # table button; code labels in format-1
+        ],
+        "min_chars": 12000,
+        "min_headings": 8,
         "wait": 4000,
+    },
+    "anthropic": {
+        "method": "live",
+        "url": "https://www.anthropic.com/legal/privacy",
+        # the article's own <header> holds the title and effective date next to
+        # a section menu and download button, so read the title, the metadata
+        # list and the body rather than the whole article
+        "root": "main article h1, main article header dl, main article > header ~ div",
+        "drop": [r"^Version history"],
+        "min_chars": 30000,
+        "min_headings": 10,
+        "wait": 3000,
     },
     "openai": {
         "method": "wayback",
         "url": "https://openai.com/policies/data-processing-addendum/",
-        "tags": ["h1", "h2", "h3", "p", "li"],
-        "min_len": 40,
+        "root": "main article",
+        "strip": ["(opens in a new window)"],  # screen-reader link labels
         "drop": [
-            r"Back to main menu",              # site header menus
-            r"\(opens in a new window\)$",     # footer links
+            r"Back to main menu",
+            r"\(opens in a new window\)$",  # format-1 snapshots only
+            r"^Download PDF$",
+            r"^Select language$",
         ],
-        "min_chars": 6000,
+        "min_chars": 12000,
+        "min_headings": 6,
     },
 }
 
@@ -98,32 +122,142 @@ class ScrapeError(Exception):
     """The page could not be fetched, or what came back is not the policy."""
 
 
-# ─── text extraction (pure functions — these are what the tests cover) ───────
+# ─── in-page extraction ──────────────────────────────────────────────────────
+#
+# Runs inside the browser. Opens collapsed sections (never popups) and every
+# tab panel, removes site chrome, puts definition-list pairs and ARIA table
+# rows on one line each,
+# marks headings with "# " and list items with "- ", then returns the
+# rendered text (innerText), which follows reading order and leaves out
+# anything the page hides.
 
-_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿"), None)
+EXTRACT_JS = """
+async (cfg) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const CHROME = 'nav, header, footer, [role=navigation], [role=banner], [role=dialog], ' +
+    'select, .sr-only, .visually-hidden, script, style, noscript' +
+    (cfg.remove ? ', ' + cfg.remove : '');
+  // toggles that open a popup (menus, pickers, dialogs) are page controls, not content
+  const NO_CLICK = CHROME + ', [aria-haspopup]:not([aria-haspopup="false"]), [role=combobox]';
+  const roots = () => (cfg.root ? [...document.querySelectorAll(cfg.root)] : [document.body]);
+
+  for (let round = 0; round < 3; round++) {
+    const closed = roots()
+      .flatMap((r) => [...r.querySelectorAll('[aria-expanded="false"]')])
+      .filter((el) => !el.closest(NO_CLICK) && el.getClientRects().length);
+    if (!closed.length) break;
+    for (const el of closed) {
+      try { el.click(); } catch (e) {}
+      await sleep(cfg.clickDelay ?? 300);
+    }
+    await sleep(cfg.clickDelay ?? 300);
+  }
+
+  // tab groups: show every panel, each under its tab's name as a heading,
+  // and drop the tab strip itself
+  for (const root of roots()) {
+    root.querySelectorAll('[role=tab]').forEach((tab) => {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') || '');
+      if (!panel || !root.contains(panel)) return;
+      const label = document.createElement('h6');
+      label.textContent = tab.textContent.trim();
+      panel.prepend(label);
+    });
+    root.querySelectorAll('[role=tabpanel]').forEach((panel) => {
+      panel.hidden = false;
+      panel.removeAttribute('aria-hidden');
+      panel.style.display = 'block';
+    });
+    root.querySelectorAll('[role=tablist]').forEach((el) => el.remove());
+  }
+
+  const HEADINGS = 'h1, h2, h3, h4, h5, h6, [role=heading]' + (cfg.headings ? ', ' + cfg.headings : '');
+  const flat = (el) => el.innerText.split('\\n').map((s) => s.trim()).filter(Boolean).join('; ');
+  const parts = [];
+  for (const root of roots()) {
+    root.querySelectorAll(CHROME).forEach((el) => el.remove());
+
+    // definition lists: "term: value" on one line
+    root.querySelectorAll('dt').forEach((dt) => {
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.tagName !== 'DD') return;
+      dt.textContent = dt.textContent.trim() + ': ' + flat(dd);
+      dd.remove();
+    });
+
+    // tables built from divs with ARIA roles: one line per row, "cell | cell"
+    root.querySelectorAll('[role=row]').forEach((row) => {
+      const cells = [...row.querySelectorAll('[role=cell], [role=gridcell], [role=columnheader], [role=rowheader]')]
+        .filter((c) => c.closest('[role=row]') === row);
+      if (!cells.length) return;
+      const line = document.createElement('div');
+      line.textContent = cells.map(flat).join(' | ');
+      row.replaceWith(line);
+    });
+
+    [root, ...root.querySelectorAll(HEADINGS)].filter((h) => h.matches(HEADINGS)).forEach((h) => {
+      h.prepend(document.createTextNode('\\n\\n# '));
+      h.append(document.createTextNode('\\n\\n'));
+    });
+    root.querySelectorAll('li').forEach((li) => li.prepend(document.createTextNode('- ')));
+    parts.push(root.innerText);
+  }
+  return parts.join('\\n');
+}
+"""
+
+
+# ─── text handling (pure functions) ──────────────────────────────────────────
+
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
+_MARKERS = {"#", "-", "•", "·", "◦", "▪"}
 
 
 def normalize(text):
     """Collapse whitespace and strip invisible characters, so a changed
     non-breaking space doesn't register as a changed policy."""
-    text = text.translate(_INVISIBLE).replace(" ", " ")
+    text = text.translate(_INVISIBLE).replace("\u00a0", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 
-def extract_chunks(html, tags, min_len=40, root=None):
-    """Return the text of each matching element, in document order."""
-    soup = BeautifulSoup(html, "html.parser")
-    scope = (soup.select_one(root) if root else None) or soup
-    chunks = []
-    for tag in scope.find_all(tags):
-        text = normalize(tag.get_text(separator=" ", strip=True))
-        if len(text) > min_len:
-            chunks.append(text)
-    return chunks
+def text_to_blocks(text, drop=(), strip=()):
+    """Turn the page's rendered text into one block per line of content.
+
+    Headings come out as "# text", list items as "- text", table rows as
+    "cell | cell". A marker that the page rendered on a line of its own
+    (Meta draws its bullets that way) is attached to the text that follows.
+    Nothing is filtered by length; only lines with no letters or digits
+    at all (stray punctuation) are skipped.
+    """
+    patterns = [re.compile(p) for p in drop]
+    blocks = []
+    prefix = ""
+    for raw in text.split("\n"):
+        for junk in strip:
+            raw = raw.replace(junk, "")
+        line = normalize(raw.replace("\t", " | "))
+        if not line:
+            continue
+        words = line.split(" ")
+        while words and words[0] in _MARKERS:
+            prefix = "#" if "#" in (words.pop(0), prefix) else "-"
+        line = " ".join(words)
+        if not line:
+            continue  # the marker stood alone; keep it for the next line
+        if not re.search(r"\w", line):
+            prefix = ""
+            continue
+        if not any(p.search(line) for p in patterns):
+            blocks.append(f"{prefix} {line}" if prefix else line)
+        prefix = ""
+    return blocks
 
 
 def clean_chunks(chunks, drop=()):
-    """Remove navigation noise and nested duplicates.
+    """Clean a format-1 snapshot: remove navigation noise and nested duplicates.
+
+    Only diff.py uses this now, to read snapshots taken before the
+    structural extractor.
 
     - a chunk matching a `drop` pattern is boilerplate; so is any chunk
       whose text sits entirely inside one (the individual nav links)
@@ -154,7 +288,7 @@ def clean_chunks(chunks, drop=()):
     return cleaned
 
 
-def validate(name, text, min_chars):
+def validate(name, text, min_chars, min_headings=0):
     """Raise ScrapeError unless `text` plausibly is the policy page."""
     lowered = text.lower()
     for marker in BLOCK_MARKERS:
@@ -164,46 +298,82 @@ def validate(name, text, min_chars):
         raise ScrapeError(
             f"{name}: only {len(text)} chars extracted, expected at least {min_chars}"
         )
+    headings = sum(1 for line in text.split("\n") if line.startswith("# "))
+    if headings < min_headings:
+        raise ScrapeError(
+            f"{name}: only {headings} headings found, expected at least {min_headings}"
+        )
     return text
 
 
-def html_to_snapshot(name, html):
-    """Full pipeline for one target: extract → clean → validate."""
+def build_snapshot(name, rendered_text, source, extra_header=()):
+    """Rendered page text → validated snapshot file content."""
     cfg = TARGETS[name]
-    chunks = extract_chunks(html, cfg["tags"], cfg["min_len"], cfg.get("root"))
-    text = "\n\n".join(clean_chunks(chunks, cfg.get("drop", ())))
-    return validate(name, text, cfg["min_chars"])
+    body = "\n\n".join(text_to_blocks(rendered_text, cfg.get("drop", ()), cfg.get("strip", ())))
+    validate(name, body, cfg["min_chars"], cfg.get("min_headings", 0))
+    header = [f"[format: {FORMAT}]", f"[source: {source}]", *extra_header]
+    return "\n".join(header) + "\n\n" + body
 
 
-# ─── fetching ────────────────────────────────────────────────────────────────
+# ─── browser ─────────────────────────────────────────────────────────────────
 
-async def fetch_playwright(cfg):
+def _extract_args(cfg, click_delay=300):
+    return {
+        "root": cfg.get("root"),
+        "headings": cfg.get("headings"),
+        "remove": ", ".join(cfg.get("remove", ())) or None,
+        "clickDelay": click_delay,
+    }
+
+
+async def render_live(cfg):
+    """Open the live page and return (rendered_text, final_url)."""
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
-            page = await browser.new_page(user_agent=USER_AGENT)
+            page = await browser.new_page(user_agent=USER_AGENT, locale="en-US")
             await page.goto(cfg["url"], wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(cfg.get("wait", 2000))
-
-            if cfg.get("expand"):
-                for button in await page.query_selector_all('[role="button"]'):
-                    try:
-                        if await button.get_attribute("aria-expanded") == "false":
-                            await button.click()
-                            await page.wait_for_timeout(500)
-                    except Exception:
-                        continue  # a button that won't click shouldn't sink the run
-                await page.wait_for_timeout(2000)
-
-            return await page.content()
+            final_url = page.url  # before expanding: some pages rewrite the hash
+            return await page.evaluate(EXTRACT_JS, _extract_args(cfg)), final_url
         finally:
             await browser.close()
 
 
-def wayback_captures(url, limit=8, get=requests.get):
-    """Newest-first (timestamp, original_url) pairs from the Wayback CDX index."""
+_SCRIPT = re.compile(r"<script\b.*?</script\s*>", re.IGNORECASE | re.DOTALL)
+
+
+async def render_html(html, cfg):
+    """Render saved HTML offline, with the page's own scripts stripped,
+    and return its text. Used for Wayback captures and by the tests."""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(offline=True)
+            page = await context.new_page()
+            await page.set_content(_SCRIPT.sub("", html), wait_until="domcontentloaded")
+            return await page.evaluate(EXTRACT_JS, _extract_args(cfg, click_delay=0))
+        finally:
+            await browser.close()
+
+
+# ─── wayback ─────────────────────────────────────────────────────────────────
+
+MIN_CAPTURE_BYTES = 20000  # a bot-wall capture is a few KB; the real page is far larger
+MAX_CAPTURE_FETCHES = 8
+
+
+def wayback_captures(url, limit=80, get=requests.get):
+    """Newest-first (timestamp, original_url) pairs from the Wayback CDX index.
+
+    The Archive's own crawler gets bot-walled too, sometimes for weeks, so
+    this looks a long way back and skips captures too small to be the page.
+    A capture whose size the index doesn't report is kept.
+    """
     response = get(
         "https://web.archive.org/cdx/search/cdx",
         params={
@@ -216,11 +386,16 @@ def wayback_captures(url, limit=8, get=requests.get):
     )
     if not response.text.strip():
         return []
-    rows = response.json()[1:]  # first row is the column header
-    return [(row[1], row[2]) for row in reversed(rows)]
+    captures = []
+    for row in reversed(response.json()[1:]):  # first row is the column header
+        size = row[6] if len(row) > 6 else ""
+        if str(size).isdigit() and int(size) < MIN_CAPTURE_BYTES:
+            continue
+        captures.append((row[1], row[2]))
+    return captures
 
 
-def scrape_wayback(name, get=requests.get):
+async def scrape_wayback(name, get=requests.get):
     """OpenAI blocks automated access, so its page is read through the
     Internet Archive. The newest capture is sometimes itself a block page,
     so walk back through recent captures until one validates."""
@@ -232,16 +407,19 @@ def scrape_wayback(name, get=requests.get):
     if not captures:
         raise ScrapeError(f"{name}: no Wayback captures found")
 
+    captures = captures[:MAX_CAPTURE_FETCHES]
     last_error = None
     for timestamp, original in captures:
         snapshot_url = f"https://web.archive.org/web/{timestamp}/{original}"
         try:
-            html = get(snapshot_url, timeout=30).content
-            body = html_to_snapshot(name, html)
+            html = get(snapshot_url, timeout=30).content.decode("utf-8", "replace")
+            rendered = await render_html(html, cfg)
+            return build_snapshot(
+                name, rendered, original,
+                extra_header=(f"[Wayback snapshot: {timestamp}]", f"[URL: {snapshot_url}]"),
+            )
         except Exception as e:
             last_error = e
-            continue
-        return f"[Wayback snapshot: {timestamp}]\n[URL: {snapshot_url}]\n\n{body}"
 
     raise ScrapeError(f"{name}: no usable capture in the last {len(captures)} ({last_error})")
 
@@ -249,12 +427,12 @@ def scrape_wayback(name, get=requests.get):
 async def scrape(name):
     cfg = TARGETS[name]
     if cfg["method"] == "wayback":
-        return scrape_wayback(name)
+        return await scrape_wayback(name)
     try:
-        html = await fetch_playwright(cfg)
+        rendered, final_url = await render_live(cfg)
     except Exception as e:
         raise ScrapeError(f"{name}: fetch failed ({e})") from e
-    return html_to_snapshot(name, html)
+    return build_snapshot(name, rendered, final_url)
 
 
 # ─── saving ──────────────────────────────────────────────────────────────────

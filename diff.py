@@ -18,25 +18,47 @@ from datetime import datetime, timezone
 
 from scrape import SNAPSHOT_DIR, TARGETS, clean_chunks, normalize
 
-LABELS = {"google": "Google", "meta": "Meta", "microsoft": "Microsoft", "openai": "OpenAI"}
+LABELS = {
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "meta": "Meta",
+    "microsoft": "Microsoft",
+    "openai": "OpenAI",
+}
 
 DATE_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.txt$")
 
 
 # ─── loading ─────────────────────────────────────────────────────────────────
 
+WAYBACK = re.compile(r"\[Wayback snapshot:[^\]]*\](?: \[URL:[^\]]*\])?")
+
+
+def snapshot_format(header):
+    """1 for snapshots from the old tag/length scraper, 2 for structural ones."""
+    return 2 if header and "[format: 2]" in header else 1
+
+
 def parse_snapshot(raw, drop=()):
-    """Split a snapshot file into (paragraphs, wayback_header_or_None)."""
+    """Split a snapshot file into (paragraphs, header_or_None).
+
+    The header is the block of [bracketed] lines at the top of the file.
+    Format-1 snapshots are cleaned with the old scraper's noise rules;
+    format-2 snapshots were scoped to the page content when scraped and
+    are read as they are.
+    """
     paragraphs = [normalize(p) for p in raw.split("\n\n")]
     paragraphs = [p for p in paragraphs if p]
     header = None
-    if paragraphs and paragraphs[0].startswith("[Wayback snapshot:"):
+    if paragraphs and paragraphs[0].startswith("["):
         header = paragraphs.pop(0)
+    if snapshot_format(header) == 2:
+        return paragraphs, header
     return clean_chunks(paragraphs, drop), header
 
 
 def load_snapshots(name, base=SNAPSHOT_DIR):
-    """[(date, paragraphs, wayback_header)] for one institution, oldest first."""
+    """[(date, paragraphs, header)] for one institution, oldest first."""
     folder = os.path.join(base, name)
     if not os.path.isdir(folder):
         return []
@@ -61,16 +83,20 @@ def diff_paragraphs(old, new):
 
 
 def find_changes(snapshots):
-    """Every consecutive pair of snapshots whose text differs, newest first."""
+    """Every consecutive pair of snapshots whose text differs, newest first.
+
+    Where the scraper itself changed between two snapshots, they can't be
+    compared line by line: that pair is returned with `format_change` set
+    and no diff, so a new extraction method never reads as a new policy.
+    """
     changes = []
-    for (date_old, old, _), (date_new, new, header) in zip(snapshots, snapshots[1:]):
-        if old != new:
-            changes.append({
-                "from": date_old,
-                "to": date_new,
-                "ops": diff_paragraphs(old, new),
-                "wayback": header,
-            })
+    for (date_old, old, header_old), (date_new, new, header) in zip(snapshots, snapshots[1:]):
+        wayback = WAYBACK.search(header or "")
+        entry = {"from": date_old, "to": date_new, "ops": [], "wayback": wayback and wayback.group(0)}
+        if snapshot_format(header_old) != snapshot_format(header):
+            changes.append({**entry, "format_change": True})
+        elif old != new:
+            changes.append({**entry, "ops": diff_paragraphs(old, new)})
     return changes[::-1]
 
 
@@ -128,7 +154,7 @@ def render_institution(name, snapshots, changes):
     if not snapshots:
         summary = "no snapshots yet"
     else:
-        n = len(changes)
+        n = sum(1 for c in changes if not c.get("format_change"))
         summary = (
             f'{len(snapshots)} snapshots since {snapshots[0][0]} &middot; '
             f'{n} change{"s" if n != 1 else ""}'
@@ -136,13 +162,20 @@ def render_institution(name, snapshots, changes):
 
     periods = []
     for c in changes:
+        if c.get("format_change"):
+            periods.append(
+                f'<p class="quiet" id="{name}-{c["to"]}">{c["to"]} &mdash; the scraper changed how it '
+                f'reads this page (headings, short list items and table rows are now kept), '
+                f'so this snapshot is not compared with the one before it.</p>'
+            )
+            continue
         wayback = f'<p class="wayback">{html.escape(c["wayback"])}</p>' if c["wayback"] else ""
         periods.append(
             f'<article class="change" id="{name}-{c["to"]}">'
             f'<p class="dates"><a href="#{name}-{c["to"]}">{c["from"]} &rarr; {c["to"]}</a></p>'
             f'{wayback}{render_ops(c["ops"])}</article>'
         )
-    if snapshots and not changes:
+    if snapshots and n == 0:
         periods.append('<p class="quiet">no change in wording since archiving began.</p>')
 
     return (
@@ -243,7 +276,7 @@ def render_page(sections, generated_at):
 <div class="wrap">
 <header>
 <h1>corporate aesthetics</h1>
-<p class="subtitle">how four companies reword their AI and data privacy disclosures</p>
+<p class="subtitle">how five companies reword their AI and data privacy disclosures</p>
 <p class="generated">generated {generated_at}</p>
 </header>
 <nav>{nav}</nav>
@@ -252,7 +285,7 @@ def render_page(sections, generated_at):
 </main>
 <footer>
 each entry is a week in which a page's wording changed, newest first. removed text is red, added text is green.
-navigation menus and sign-in banners are filtered out before comparing.
+snapshots taken before the scraper was rebuilt in november 2026 left out headings and short list items; a change to one of those before then would not show here.
 <a href="https://github.com/cabi-net/corporate-aesthetics">the git history is the archive.</a>
 </footer>
 </div>

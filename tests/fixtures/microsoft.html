@@ -1,0 +1,39 @@
+<!-- modelled on learn.microsoft.com data-privacy: two .content blocks inside main, a hidden
+     sign-in notice, an in-page outline nav, alerts, a change-log table, code-block buttons -->
+<html><body>
+<header><a href="/">Microsoft Learn</a></header>
+<main id="main">
+  <div data-bi-name="permission-content-unauthorized-private" style="display:none">
+    <div class="notification"><p>Access to this page requires authorization. You can try signing in.</p></div></div>
+  <div class="content"><h1>Data, privacy, and security for Models sold by Azure in Microsoft Foundry</h1></div>
+  <nav id="center-doc-outline"><ol><li>What data does Foundry process?</li></ol></nav>
+  <div class="content">
+    <div class="alert is-primary"><p>Important</p><p>Non-English translations are provided for convenience only.</p></div>
+    <p>Your prompts (inputs) and completions (outputs), your embeddings, and your training data:</p>
+    <ul><li>are NOT available to other customers.</li><li>are NOT available to OpenAI or other providers of Models sold by Azure.</li></ul>
+    <h3>Preventing abuse</h3>
+    <p>Managed customers may apply to modify abuse monitoring.</p>
+    <div class="code-block-header margin-top-sm" data-bi-name="code-header"><span class="code-block-header-language">JSON</span><button>Copy</button></div>
+    <pre><code>{
+  "name":"ContentLogging",
+  "value":"false"
+}</code></pre>
+    <div class="tabGroup" id="tabgroup_1">
+      <ul role="tablist">
+        <li role="presentation"><a role="tab" aria-controls="tabpanel_1_azure-portal" aria-selected="true">Using the Azure portal</a></li>
+        <li role="presentation"><a role="tab" aria-controls="tabpanel_1_azure-cli" aria-selected="false">Using the Azure CLI (or other management API)</a></li>
+      </ul>
+      <section id="tabpanel_1_azure-portal" role="tabpanel"><p>Go to the resource Overview page</p></section>
+      <section id="tabpanel_1_azure-cli" role="tabpanel" hidden="hidden" aria-hidden="true">
+        <p>Execute the following command in Azure CLI to see the same JSON data.</p>
+        <div class="code-block-header margin-top-sm" data-bi-name="code-header"><span class="code-block-header-language">Azure CLI</span><button>Copy</button></div>
+        <pre><code>az cognitiveservices account show -n resource_name -g resource_group</code></pre></section>
+    </div>
+    <h2>Change log</h2>
+    <button>Expand table</button>
+    <table><thead><tr><th>Date</th><th>Changes</th></tr></thead>
+      <tbody><tr><td>3 October 2025</td><td>Updated for Microsoft Foundry naming.</td></tr></tbody></table>
+  </div>
+</main>
+<footer><p>© Microsoft 2026</p></footer>
+</body></html>
